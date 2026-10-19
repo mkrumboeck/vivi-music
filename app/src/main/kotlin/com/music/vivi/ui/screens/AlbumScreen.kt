@@ -574,9 +574,9 @@ fun AlbumScreen(
                                 androidx.compose.material3.Button(
                                     onClick = {
                                         if (isPlaying && mediaMetadata?.album?.id == albumWithSongs.album.id) {
-                                            playerConnection.player.pause()
+                                            playerConnection.playbackPlayer.pause()
                                         } else if (mediaMetadata?.album?.id == albumWithSongs.album.id) {
-                                            playerConnection.player.play()
+                                            playerConnection.playbackPlayer.play()
                                         } else {
                                             playerConnection.service.getAutomix(playlistId)
                                             playerConnection.playQueue(

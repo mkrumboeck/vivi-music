@@ -392,7 +392,10 @@ fun BottomSheetPlayer(
     val castVolume by castHandler?.castVolume?.collectAsState() ?: remember { mutableFloatStateOf(1f) }
     
     // Use Cast state when casting, otherwise local player
-    val effectiveIsPlaying = if (isCasting) castIsPlaying else isPlaying
+    val sonosHandler = playerConnection.service.sonosConnectionHandler
+    val sonosActive by sonosHandler?.active?.collectAsState() ?: remember { mutableStateOf(false) }
+    val sonosState by sonosHandler?.state?.collectAsState() ?: remember { mutableStateOf(at.techtown.sonoscontroller.SonosState()) }
+    val effectiveIsPlaying = if (sonosActive) sonosState.playing else if (isCasting) castIsPlaying else isPlaying
 
     // Use State objects for position/duration to pass to MiniPlayer without causing recomposition
     // These states persist across playback state changes to ensure continuous progress updates
@@ -816,7 +819,7 @@ fun BottomSheetPlayer(
             while (isActive) {
                 sleepTimerTimeLeft =
                     if (playerConnection.service.sleepTimer.pauseWhenSongEnd) {
-                        playerConnection.player.duration - playerConnection.player.currentPosition
+                        playerConnection.playbackPlayer.duration - playerConnection.playbackPlayer.currentPosition
                     } else {
                         playerConnection.service.sleepTimer.triggerTime - System.currentTimeMillis()
                     }
@@ -845,8 +848,8 @@ fun BottomSheetPlayer(
             while (isActive) {
                 delay(100) // Update more frequently for smoother progress bar
                 if (sliderPosition == null) { // Only update if user isn't dragging
-                    position = playerConnection.player.currentPosition
-                    duration = playerConnection.player.duration
+                    position = playerConnection.playbackPlayer.currentPosition
+                    duration = playerConnection.playbackPlayer.duration
                 }
             }
         }
@@ -855,8 +858,8 @@ fun BottomSheetPlayer(
     // Also update position when playback state changes (e.g., song change, seek)
     LaunchedEffect(playbackState, mediaMetadata?.id) {
         if (!isCasting) {
-            position = playerConnection.player.currentPosition
-            duration = playerConnection.player.duration
+            position = playerConnection.playbackPlayer.currentPosition
+            duration = playerConnection.playbackPlayer.duration
         }
     }
     
@@ -1938,7 +1941,7 @@ fun BottomSheetPlayer(
                                             castHandler?.seekTo(it)
                                             lastManualSeekTime = System.currentTimeMillis()
                                         } else {
-                                            playerConnection.player.seekTo(it)
+                                            playerConnection.playbackPlayer.seekTo(it)
                                         }
                                         position = it
                                     }
@@ -1971,7 +1974,7 @@ fun BottomSheetPlayer(
                                             castHandler?.seekTo(it)
                                             lastManualSeekTime = System.currentTimeMillis()
                                         } else {
-                                            playerConnection.player.seekTo(it)
+                                            playerConnection.playbackPlayer.seekTo(it)
                                         }
                                         position = it
                                     }
@@ -2000,7 +2003,7 @@ fun BottomSheetPlayer(
                                             castHandler?.seekTo(it)
                                             lastManualSeekTime = System.currentTimeMillis()
                                         } else {
-                                            playerConnection.player.seekTo(it)
+                                            playerConnection.playbackPlayer.seekTo(it)
                                         }
                                         position = it
                                     }
@@ -2049,7 +2052,7 @@ fun BottomSheetPlayer(
                                             castHandler?.seekTo(it)
                                             lastManualSeekTime = System.currentTimeMillis()
                                         } else {
-                                            playerConnection.player.seekTo(it)
+                                            playerConnection.playbackPlayer.seekTo(it)
                                         }
                                         position = it
                                     }
@@ -2091,7 +2094,7 @@ fun BottomSheetPlayer(
                                             castHandler?.seekTo(it)
                                             lastManualSeekTime = System.currentTimeMillis()
                                         } else {
-                                            playerConnection.player.seekTo(it)
+                                            playerConnection.playbackPlayer.seekTo(it)
                                         }
                                         position = it
                                     }
@@ -2332,8 +2335,8 @@ fun BottomSheetPlayer(
                                             castHandler?.play()
                                         }
                                     } else if (playbackState == STATE_ENDED) {
-                                        playerConnection.player.seekTo(0, 0)
-                                        playerConnection.player.playWhenReady = true
+                                        playerConnection.playbackPlayer.seekTo(0, 0)
+                                        playerConnection.playbackPlayer.playWhenReady = true
                                     } else {
                                         playerConnection.togglePlayPause()
                                     }
@@ -2463,10 +2466,10 @@ fun BottomSheetPlayer(
                                                 castHandler?.play()
                                             }
                                         } else if (playbackState == STATE_ENDED) {
-                                            playerConnection.player.seekTo(0, 0)
-                                            playerConnection.player.playWhenReady = true
+                                            playerConnection.playbackPlayer.seekTo(0, 0)
+                                            playerConnection.playbackPlayer.playWhenReady = true
                                         } else {
-                                            playerConnection.player.togglePlayPause()
+                                            playerConnection.playbackPlayer.togglePlayPause()
                                         }
                                     },
                             ) {
@@ -2554,7 +2557,7 @@ fun BottomSheetPlayer(
                                 label = "animatedSystemVolume"
                             )
                             
-                            val volume = if (isCasting) castVolume else {
+                            val volume = if (sonosActive) sonosState.volume / 100f else if (isCasting) castVolume else {
                                 if (isVolumeActive) dragVolume else animatedSystemVolume
                             }
                             
@@ -2591,7 +2594,9 @@ fun BottomSheetPlayer(
                                 value = volume,
                                 onValueChange = { newVolume ->
                                     dragVolume = newVolume
-                                    if (isCasting) {
+                                    if (sonosActive) {
+                                        sonosHandler?.setVolume((newVolume * 100).toInt())
+                                    } else if (isCasting) {
                                         castHandler?.setVolume(newVolume)
                                     } else {
                                         // Non-blocking update to prevent "fast swipe" lag

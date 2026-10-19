@@ -337,11 +337,11 @@ private fun NewMiniPlayer(
                                 if (shouldChangeSong) {
                                     if (currentOffset > 0 && canSkipPrevious) {
                                         if (!playerConnection.service.manualSkipToPreviousWithCrossfade()) {
-                                            playerConnection.player.seekToPreviousMediaItem()
+                                            playerConnection.playbackPlayer.seekToPreviousMediaItem()
                                         }
                                     } else if (currentOffset <= 0 && canSkipNext) {
                                         if (!playerConnection.service.manualSkipToNextWithCrossfade()) {
-                                            playerConnection.player.seekToNext()
+                                            playerConnection.playbackPlayer.seekToNext()
                                         }
                                     }
                                 }
@@ -524,8 +524,8 @@ private fun NewMiniPlayerPlayButton(
                     if (isCasting) {
                         if (castIsPlaying) castHandler?.pause() else castHandler?.play()
                     } else if (playbackState == Player.STATE_ENDED) {
-                        playerConnection.player.seekTo(0, 0)
-                        playerConnection.player.playWhenReady = true
+                        playerConnection.playbackPlayer.seekTo(0, 0)
+                        playerConnection.playbackPlayer.playWhenReady = true
                     } else {
                         playerConnection.togglePlayPause()
                     }
@@ -736,11 +736,11 @@ private fun LegacyMiniPlayer(
                                 if (shouldChangeSong) {
                                     if (currentOffset > 0 && canSkipPrevious) {
                                         if (!playerConnection.service.manualSkipToPreviousWithCrossfade()) {
-                                            playerConnection.player.seekToPreviousMediaItem()
+                                            playerConnection.playbackPlayer.seekToPreviousMediaItem()
                                         }
                                     } else if (currentOffset <= 0 && canSkipNext) {
                                         if (!playerConnection.service.manualSkipToNextWithCrossfade()) {
-                                            playerConnection.player.seekToNext()
+                                            playerConnection.playbackPlayer.seekToNext()
                                         }
                                     }
                                 }
@@ -843,8 +843,8 @@ private fun LegacyPlayPauseButton(
             if (isCasting) {
                 if (castIsPlaying) castHandler?.pause() else castHandler?.play()
             } else if (playbackState == Player.STATE_ENDED) {
-                playerConnection.player.seekTo(0, 0)
-                playerConnection.player.playWhenReady = true
+                playerConnection.playbackPlayer.seekTo(0, 0)
+                playerConnection.playbackPlayer.playWhenReady = true
             } else {
                 playerConnection.togglePlayPause()
             }

@@ -375,14 +375,14 @@ private fun WordLevelCanvasLyrics(
     
     LaunchedEffect(isActiveLine) {
         if (isActiveLine && playerConnection != null) {
-            var lastPlayerPos = playerConnection.player.currentPosition
+            var lastPlayerPos = playerConnection.playbackPlayer.currentPosition
             var lastUpdateTime = System.currentTimeMillis()
             
             while (isActive) {
                 withFrameMillis {
                     val now = System.currentTimeMillis()
-                    val playerPos = playerConnection.player.currentPosition
-                    val currentlyPlaying = playerConnection.player.isPlaying
+                    val playerPos = playerConnection.playbackPlayer.currentPosition
+                    val currentlyPlaying = playerConnection.playbackPlayer.isPlaying
                     
                     if (playerPos != lastPlayerPos || !currentlyPlaying) {
                         lastPlayerPos = playerPos

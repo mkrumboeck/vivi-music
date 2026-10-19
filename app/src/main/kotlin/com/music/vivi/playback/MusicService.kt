@@ -212,6 +212,7 @@ import com.music.vivi.widget.vivimusicWidgetManager
 import com.music.vivi.widget.MusicWidgetReceiver
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
@@ -375,6 +376,10 @@ class MusicService :
     }
 
     fun setPreferredAudioDevice(deviceId: Int?) { // this helps us to change between devices
+        sonosConnectionHandler?.takeIf { it.isActive || it.target.value != null }?.let {
+            it.returnToLocal(preferredDeviceId = deviceId)
+            return
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val devices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
             val deviceInfo = devices.find { it.id == deviceId }
@@ -471,6 +476,81 @@ class MusicService :
     private val recentlyFailedSongs = mutableSetOf<String>()
     private var failedSongsClearJob: Job? = null
 
+
+    var sonosConnectionHandler: SonosConnectionHandler? = null
+        private set
+    val playbackPlayer: Player
+        get() = sonosConnectionHandler?.takeIf { it.controlsRemote }?.remotePlayer ?: player
+
+    internal fun useSonosSession(enabled: Boolean) {
+        if (!isRunning) return
+        val active = if (enabled) sonosConnectionHandler?.remotePlayer ?: player else player
+        mediaSession.player = active
+        player.removeListener(sleepTimer)
+        sonosConnectionHandler?.remotePlayer?.removeListener(sleepTimer)
+        sleepTimer.player = active
+        active.addListener(sleepTimer)
+        if (enabled) {
+            cancelCrossfadeIfActive()
+            player.pause()
+        }
+    }
+
+    internal suspend fun resolveSonosStream(mediaId: String): at.techtown.sonoscontroller.AudioSource.Stream =
+        withContext(Dispatchers.IO) {
+            val resolved = YTPlayerUtils.playerResponseForPlayback(
+                mediaId, audioQuality = audioQuality, connectivityManager = connectivityManager,
+                context = this@MusicService,
+            ).getOrNull()
+            val compatible = resolved?.let { SonosPlaybackPolicy.canPassThrough(it.format.mimeType) } == true
+            val fallback = if (compatible) null else (
+                com.music.innertube.NewPipeExtractor.sonosAudioStream(mediaId)
+                    ?: throw java.io.IOException(getString(R.string.sonos_stream_format_unsupported))
+            )
+            val url = fallback?.first ?: requireNotNull(resolved).streamUrl
+            val mime = fallback?.second ?: requireNotNull(resolved).format.mimeType.substringBefore(';')
+            val headers = if (fallback == null) requireNotNull(resolved).streamHeaders else mapOf(
+                "User-Agent" to com.music.innertube.models.YouTubeClient.USER_AGENT_WEB,
+                "Accept" to "*/*",
+                "Origin" to "https://www.youtube.com",
+                "Referer" to "https://www.youtube.com/",
+            )
+            val cached = database.format(mediaId).first()
+            val cacheKey = if (fallback == null && cached?.itag == resolved?.format?.itag &&
+                cached?.contentLength == resolved?.format?.contentLength) mediaId
+                else "sonos-stream:$mediaId:" + url.hashCode()
+            val factory = createCacheDataSource()
+            fun open(offset: Long, count: Long): androidx.media3.datasource.DataSourceInputStream {
+                val input = androidx.media3.datasource.DataSourceInputStream(
+                    factory.createDataSource(),
+                    androidx.media3.datasource.DataSpec.Builder()
+                        .setUri(url.toUri()).setKey(cacheKey).setHttpRequestHeaders(headers)
+                        .setPosition(offset).setLength(count).build(),
+                )
+                try { input.open(); return input }
+                catch (error: Exception) {
+                    input.close()
+                    Timber.tag("ViviSonos").e(error, "Upstream range failed at offset=%d, length=%d", offset, count)
+                    throw error
+                }
+            }
+            val length = (if (fallback == null) resolved?.format?.contentLength else
+                url.toUri().getQueryParameter("clen")?.toLongOrNull())?.takeIf { it > 0 }
+                ?: factory.createDataSource().let { probe ->
+                    try {
+                        probe.open(androidx.media3.datasource.DataSpec.Builder()
+                            .setUri(url.toUri()).setHttpRequestHeaders(headers).setKey(cacheKey).build())
+                            .takeIf { it > 0 }
+                            ?: throw java.io.IOException(getString(R.string.sonos_finite_tracks_only))
+                    } finally { probe.close() }
+                }
+            val chunkSize = if (fallback == null && resolved != null && resolved.rangeChunkSizeBytes > 0)
+                resolved.rangeChunkSizeBytes else CHUNK_LENGTH
+            at.techtown.sonoscontroller.AudioSource.Stream(length, mime) { offset, count ->
+                SonosRangeInputStream(offset, count, chunkSize, ::open).apply { prepare() }
+            }
+        }
+
     // Google Cast support
     var castConnectionHandler: CastConnectionHandler? = null
         private set
@@ -548,7 +628,8 @@ class MusicService :
                 .setContentIntent(pending)
                 .setOngoing(true)
                 .build()
-            startForeground(NOTIFICATION_ID, notification)
+            androidx.core.app.ServiceCompat.startForeground(this, NOTIFICATION_ID, notification,
+                if (Build.VERSION.SDK_INT >= 29) android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK else 0)
         } catch (e: Exception) {
             Timber.tag(TAG).e(e, "Failed to create foreground notification")
             reportException(e)
@@ -640,6 +721,7 @@ class MusicService :
 
         // Initialize Google Cast
         initializeCast()
+        sonosConnectionHandler = SonosConnectionHandler(this, scope)
 
         // 4. Watch for EQ profile changes
         scope.launch {
@@ -996,7 +1078,7 @@ class MusicService :
                 sleepTimer.player = newPlayer
 
                 try {
-                    mediaSession.player = newPlayer
+                    if (sonosConnectionHandler?.isActive != true) mediaSession.player = newPlayer
                 } catch (e: Exception) {
                     Timber.tag(TAG).e(e, "Failed to swap player in MediaSession")
                 }
@@ -1617,6 +1699,7 @@ class MusicService :
             crossfadeEnabled &&
                 crossfadeManualSkipEnabled &&
                 !isCrossfading &&
+                sonosConnectionHandler?.isActive != true &&
                 castConnectionHandler?.isCasting?.value != true &&
                 player.duration != C.TIME_UNSET &&
                 player.playbackState != STATE_IDLE &&
@@ -2456,6 +2539,8 @@ class MusicService :
             scrobbleManager?.onSongStart(player.currentMetadata, duration = player.duration)
         }
 
+        sonosConnectionHandler?.onLocalMediaChanged(mediaItem?.metadata)
+
         // Sync Cast when media changes and Cast is connected
         // Skip if this change was triggered by Cast sync (to prevent loops)
         if (castConnectionHandler?.isCasting?.value == true &&
@@ -2537,6 +2622,7 @@ class MusicService :
      * downloaded here — that is handled by ExoPlayer's own CacheDataSource pipeline.
      */
     private fun prefetchNextTrack() {
+        if (sonosConnectionHandler?.isActive == true) return
         // Cancel any in-flight prefetch from the previous song
         prefetchJob?.cancel()
 
@@ -2596,7 +2682,7 @@ class MusicService :
         @Player.State playbackState: Int,
     ) {
         // Force Repeat All if the player ignored it and ended playback
-        if (playbackState == Player.STATE_ENDED) {
+        if (playbackState == Player.STATE_ENDED && sonosConnectionHandler?.controlsRemote != true) {
             val repeatMode = runBlocking { dataStore.get(RepeatModeKey, REPEAT_MODE_OFF) }
             if (repeatMode == REPEAT_MODE_ALL && player.mediaItemCount > 0) {
                 player.seekTo(0, 0)
@@ -2630,6 +2716,15 @@ class MusicService :
     }
 
     override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+        if (playWhenReady && sonosConnectionHandler?.isReturning == true) {
+            player.pause()
+            return
+        }
+        if (playWhenReady && sonosConnectionHandler?.controlsRemote == true) {
+            player.pause()
+            sonosConnectionHandler?.play()
+            return
+        }
         // Safety net: if local player tries to start while casting, immediately pause it
         if (playWhenReady && castConnectionHandler?.isCasting?.value == true) {
             player.pause()
@@ -2655,6 +2750,8 @@ class MusicService :
         player: Player,
         events: Player.Events,
     ) {
+        if (events.containsAny(Player.EVENT_TIMELINE_CHANGED, Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED,
+                Player.EVENT_REPEAT_MODE_CHANGED)) sonosConnectionHandler?.onLocalQueueChanged()
         if (events.containsAny(
                 Player.EVENT_PLAYBACK_STATE_CHANGED,
                 Player.EVENT_PLAY_WHEN_READY_CHANGED
@@ -3787,6 +3884,7 @@ class MusicService :
             // Ignore
         }
         audioManager.unregisterAudioDeviceCallback(audioDeviceCallback)
+        sonosConnectionHandler?.release()
         castConnectionHandler?.release()
         if (dataStore.get(PersistentQueueKey, true)) {
             saveQueueToDisk()
@@ -3852,21 +3950,25 @@ class MusicService :
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             MusicWidgetReceiver.ACTION_PLAY_PAUSE -> {
-                if (player.isPlaying) player.pause() else player.play()
-                updateWidgetUI(player.isPlaying)
+                if (playbackPlayer.playWhenReady) playbackPlayer.pause() else playbackPlayer.play()
+                updateWidgetUI(playbackPlayer.isPlaying)
             }
             MusicWidgetReceiver.ACTION_LIKE -> {
                 toggleLike()
             }
             MusicWidgetReceiver.ACTION_NEXT -> {
-                if (!manualSkipToNextWithCrossfade()) {
+                if (sonosConnectionHandler?.controlsRemote == true) {
+                    sonosConnectionHandler?.skipToNext()
+                } else if (!manualSkipToNextWithCrossfade()) {
                     cancelCrossfadeIfActive()
                     player.seekToNext()
                 }
                 updateWidgetUI(player.isPlaying)
             }
             MusicWidgetReceiver.ACTION_PREVIOUS -> {
-                if (!manualSkipToPreviousWithCrossfade()) {
+                if (sonosConnectionHandler?.controlsRemote == true) {
+                    sonosConnectionHandler?.skipToPrevious()
+                } else if (!manualSkipToPreviousWithCrossfade()) {
                     cancelCrossfadeIfActive()
                     player.seekToPrevious()
                 }
@@ -3988,6 +4090,7 @@ class MusicService :
     }
 
     private fun scheduleCrossfade() {
+        if (sonosConnectionHandler?.isActive == true) return
         crossfadeTriggerJob?.cancel()
         crossfadeTriggerJob = null
         if (isCrossfading) return
@@ -4106,6 +4209,7 @@ class MusicService :
     fun manualSkipToNextWithCrossfade(): Boolean {
         if (!crossfadeEnabled || !crossfadeManualSkipEnabled) return false
         if (isCrossfading) return false
+        if (sonosConnectionHandler?.isActive == true) return false
         if (castConnectionHandler?.isCasting?.value == true) return false
         if (!player.hasNextMediaItem()) return false
         if (player.duration == C.TIME_UNSET) return false
@@ -4127,6 +4231,7 @@ class MusicService :
     fun manualSkipToPreviousWithCrossfade(): Boolean {
         if (!crossfadeEnabled || !crossfadeManualSkipEnabled) return false
         if (isCrossfading) return false
+        if (sonosConnectionHandler?.isActive == true) return false
         if (castConnectionHandler?.isCasting?.value == true) return false
         if (!player.hasPreviousMediaItem()) return false
         if (player.duration == C.TIME_UNSET) return false
@@ -4154,6 +4259,7 @@ class MusicService :
     fun manualSeekToIndexWithCrossfade(targetIndex: Int): Boolean {
         if (!crossfadeEnabled || !crossfadeManualSkipEnabled) return false
         if (isCrossfading) return false
+        if (sonosConnectionHandler?.isActive == true) return false
         if (castConnectionHandler?.isCasting?.value == true) return false
         if (targetIndex < 0 || targetIndex >= player.mediaItemCount) return false
         if (targetIndex == player.currentMediaItemIndex) return false
@@ -4395,7 +4501,7 @@ class MusicService :
         sleepTimer.player = player
 
         try {
-            (mediaSession as MediaSession).player = player
+            if (sonosConnectionHandler?.isActive != true) (mediaSession as MediaSession).player = player
         } catch (e: Exception) {
             timber.log.Timber.e(e, "Failed to swap player in MediaSession")
         }

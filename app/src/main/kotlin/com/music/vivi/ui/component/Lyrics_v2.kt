@@ -674,7 +674,7 @@ fun LyricsV2(
                         activeLineIndices = emptySet()
                         return@LaunchedEffect
                     }
-                    var lastPlayerPos = playerConnection.player.currentPosition
+                    var lastPlayerPos = playerConnection.playbackPlayer.currentPosition
                     var lastUpdateTime = System.currentTimeMillis()
                     var lastPlaybackPosition = 0L
                     val hasWordTimings = lines.any { !it.words.isNullOrEmpty() }
@@ -689,8 +689,8 @@ fun LyricsV2(
                             sliderPos!!
                         } else {
                             val providerPos = positionProvider()
-                            val playerPos = playerConnection.player.currentPosition
-                            val isPlaying = playerConnection.player.isPlaying
+                            val playerPos = playerConnection.playbackPlayer.currentPosition
+                            val isPlaying = playerConnection.playbackPlayer.isPlaying
                             if (kotlin.math.abs(providerPos - playerPos) > 1000L) {
                                 lastPlayerPos = playerPos
                                 lastUpdateTime = now

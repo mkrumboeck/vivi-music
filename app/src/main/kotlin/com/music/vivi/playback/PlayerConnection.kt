@@ -75,6 +75,8 @@ class PlayerConnection(
     val player: ExoPlayer
         get() = getPlayerSafe()
 
+    val playbackPlayer: Player get() = service.playbackPlayer
+
     /** Tracks whether player initialization completed successfully */
     private val isPlayerInitialized = MutableStateFlow(service.isPlayerReady.value)
 
@@ -179,14 +181,17 @@ class PlayerConnection(
             scope.launch {
                 service.playerFlow.collect { newPlayer ->
                     if (newPlayer != null && newPlayer != attachedPlayer) {
-                        updateAttachedPlayer(newPlayer)
+                        updateAttachedPlayer(service.playbackPlayer)
                     }
                 }
             }
             
+            service.sonosConnectionHandler?.let { sonos ->
+                scope.launch { sonos.routing.collect { updateAttachedPlayer(service.playbackPlayer) } }
+            }
             // Initial setup if flow hasn't emitted yet but service is ready
             if (attachedPlayer == null && service.isPlayerReady.value) {
-                 updateAttachedPlayer(player)
+                 updateAttachedPlayer(service.playbackPlayer)
             }
 
             Timber.tag(TAG).d("PlayerConnection flow observer registered")
@@ -207,8 +212,8 @@ class PlayerConnection(
         playWhenReady.value = newPlayer.playWhenReady
         mediaMetadata.value = newPlayer.currentMetadata
         queueTitle.value = service.queueTitle
-        queueWindows.value = newPlayer.getQueueWindows()
-        currentWindowIndex.value = newPlayer.getCurrentQueueIndex()
+        queueWindows.value = player.getQueueWindows()
+        currentWindowIndex.value = player.getCurrentQueueIndex()
         currentMediaItemIndex.value = newPlayer.currentMediaItemIndex
         shuffleModeEnabled.value = newPlayer.shuffleModeEnabled
         repeatMode.value = newPlayer.repeatMode
@@ -320,6 +325,8 @@ class PlayerConnection(
             return
         }
         try {
+            service.sonosConnectionHandler?.takeIf { it.controlsRemote }?.let { sonos -> if (sonos.wantsPlayback) sonos.pause() else sonos.play(); return }
+            if (service.sonosConnectionHandler?.isReturning == true) return
             val castHandler = service.castConnectionHandler
             if (castHandler?.isCasting?.value == true) {
                 if (castHandler.castIsPlaying.value) {
@@ -345,6 +352,8 @@ class PlayerConnection(
             return
         }
         try {
+            service.sonosConnectionHandler?.takeIf { it.controlsRemote }?.let { sonos -> sonos.play(); return }
+            if (service.sonosConnectionHandler?.isReturning == true) return
             val castHandler = service.castConnectionHandler
             if (castHandler?.isCasting?.value == true) {
                 castHandler.play()
@@ -369,6 +378,8 @@ class PlayerConnection(
             return
         }
         try {
+            service.sonosConnectionHandler?.takeIf { it.controlsRemote }?.let { sonos -> sonos.pause(); return }
+            if (service.sonosConnectionHandler?.isReturning == true) return
             val castHandler = service.castConnectionHandler
             if (castHandler?.isCasting?.value == true) {
                 castHandler.pause()
@@ -390,6 +401,8 @@ class PlayerConnection(
             return
         }
         try {
+            service.sonosConnectionHandler?.takeIf { it.controlsRemote }?.let { sonos -> sonos.seekTo(position); return }
+            if (service.sonosConnectionHandler?.isReturning == true) return
             val castHandler = service.castConnectionHandler
             if (castHandler?.isCasting?.value == true) {
                 castHandler.seekTo(position)
@@ -409,6 +422,8 @@ class PlayerConnection(
         }
         try {
             // When casting, use Cast skip instead of local player
+            service.sonosConnectionHandler?.takeIf { it.controlsRemote }?.let { sonos -> sonos.skipToNext(); return }
+            if (service.sonosConnectionHandler?.isReturning == true) return
             val castHandler = service.castConnectionHandler
             if (castHandler?.isCasting?.value == true) {
                 castHandler.skipToNext()
@@ -441,6 +456,8 @@ class PlayerConnection(
         }
         try {
             // When casting, use Cast skip instead of local player
+            service.sonosConnectionHandler?.takeIf { it.controlsRemote }?.let { sonos -> sonos.skipToPrevious(); return }
+            if (service.sonosConnectionHandler?.isReturning == true) return
             val castHandler = service.castConnectionHandler
             if (castHandler?.isCasting?.value == true) {
                 castHandler.skipToPrevious()
@@ -475,6 +492,7 @@ class PlayerConnection(
     }
 
     fun seekToQueueItem(index: Int) {
+        service.sonosConnectionHandler?.takeIf { it.controlsRemote }?.let { it.seekToQueueItem(index); return }
         if (!service.manualSeekToIndexWithCrossfade(index)) {
             service.cancelCrossfadeIfActive()
             player.seekToDefaultPosition(index)
@@ -484,7 +502,7 @@ class PlayerConnection(
 
     override fun onPlaybackStateChanged(state: Int) {
         playbackState.value = state
-        error.value = player.playerError
+        error.value = playbackPlayer.playerError
     }
 
     override fun onPlayWhenReadyChanged(

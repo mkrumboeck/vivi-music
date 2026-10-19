@@ -352,6 +352,7 @@ class CastConnectionHandler(
         
         override fun onSessionStarted(session: CastSession, sessionId: String) {
             Timber.d("Cast session started: $sessionId")
+            musicService.sonosConnectionHandler?.takeIf { it.isActive || it.target.value != null }?.returnToLocal(resume = false)
             _isCasting.value = true
             _isConnecting.value = false
             _castDeviceName.value = session.castDevice?.friendlyName
@@ -365,8 +366,11 @@ class CastConnectionHandler(
             // Start position updates
             startPositionUpdates()
             
-            // Load current media
-            loadCurrentMedia()
+            // Finish the owned Sonos session before Cast starts loading audio.
+            scope.launch {
+                musicService.sonosConnectionHandler?.awaitLocalForCast()
+                if (castSession == session && _isCasting.value) loadCurrentMedia()
+            }
         }
         
         override fun onSessionStartFailed(session: CastSession, error: Int) {
@@ -407,6 +411,7 @@ class CastConnectionHandler(
         }
         
         override fun onSessionResumed(session: CastSession, wasSuspended: Boolean) {
+            musicService.sonosConnectionHandler?.takeIf { it.isActive || it.target.value != null }?.returnToLocal(resume = false)
             _isCasting.value = true
             _isConnecting.value = false
             _castDeviceName.value = session.castDevice?.friendlyName
@@ -437,6 +442,7 @@ class CastConnectionHandler(
             
             // Check if already connected
             sessionManager?.currentCastSession?.let { session ->
+                musicService.sonosConnectionHandler?.takeIf { it.isActive || it.target.value != null }?.returnToLocal(resume = false)
                 _isCasting.value = true
                 _castDeviceName.value = session.castDevice?.friendlyName
                 remoteMediaClient = session.remoteMediaClient
@@ -461,14 +467,13 @@ class CastConnectionHandler(
     }
     
     fun connectToRoute(route: MediaRouter.RouteInfo) {
-        // Ensure we're initialized before trying to connect
-        if (mediaRouter == null) {
-            initialize()
+        scope.launch {
+            musicService.sonosConnectionHandler?.awaitLocalForCast()
+            if (mediaRouter == null) initialize()
+            _isConnecting.value = true
+            mediaRouter?.selectRoute(route)
         }
-        _isConnecting.value = true
-        mediaRouter?.selectRoute(route)
     }
-    
     fun disconnect() {
         sessionManager?.endCurrentSession(true)
     }

@@ -113,7 +113,10 @@ fun PlayerV2Landscape(
     val castIsPlaying by castHandler?.castIsPlaying?.collectAsState() ?: remember { mutableStateOf(false) }
     val castIsBuffering by castHandler?.castIsBuffering?.collectAsState() ?: remember { mutableStateOf(false) }
     val castVolume by castHandler?.castVolume?.collectAsState() ?: remember { mutableFloatStateOf(1f) }
-    val effectiveIsPlaying = if (isCasting) castIsPlaying else isPlaying
+    val sonosHandler = playerConnection.service.sonosConnectionHandler
+    val sonosActive by sonosHandler?.active?.collectAsState() ?: remember { mutableStateOf(false) }
+    val sonosState by sonosHandler?.state?.collectAsState() ?: remember { mutableStateOf(at.techtown.sonoscontroller.SonosState()) }
+    val effectiveIsPlaying = if (sonosActive) sonosState.playing else if (isCasting) castIsPlaying else isPlaying
     var lastManualSeekTime by remember { mutableLongStateOf(0L) }
 
     BackHandler(enabled = playerState != PlayerInternalState.COVER) {
@@ -224,8 +227,8 @@ fun PlayerV2Landscape(
             while (isActive) {
                 delay(100)
                 if (sliderPosition == null) {
-                    val rawDuration = playerConnection.player.duration
-                    position = playerConnection.player.currentPosition.coerceAtLeast(0L)
+                    val rawDuration = playerConnection.playbackPlayer.duration
+                    position = playerConnection.playbackPlayer.currentPosition.coerceAtLeast(0L)
                     duration = if (rawDuration == C.TIME_UNSET || rawDuration < 0) 0L else rawDuration
                 }
             }
@@ -235,8 +238,8 @@ fun PlayerV2Landscape(
     // Also update once on song change
     LaunchedEffect(mediaMetadata?.id) {
         if (!isCasting) {
-            val rawDuration = playerConnection.player.duration
-            position = playerConnection.player.currentPosition.coerceAtLeast(0L)
+            val rawDuration = playerConnection.playbackPlayer.duration
+            position = playerConnection.playbackPlayer.currentPosition.coerceAtLeast(0L)
             duration = if (rawDuration == C.TIME_UNSET || rawDuration < 0) 0L else rawDuration
         }
     }
@@ -294,14 +297,16 @@ fun PlayerV2Landscape(
                 castHandler?.seekTo(pos)
                 lastManualSeekTime = System.currentTimeMillis()
             } else {
-                playerConnection.player.seekTo(pos)
+                playerConnection.playbackPlayer.seekTo(pos)
             }
             position = pos
         }
     }
 
     val onVolumeChange: (Float) -> Unit = { newValue ->
-        if (isCasting) {
+        if (sonosActive) {
+            sonosHandler?.setVolume((newValue * 100).toInt())
+        } else if (isCasting) {
             castHandler?.setVolume(newValue)
         } else {
             systemVolume = newValue
@@ -351,8 +356,8 @@ fun PlayerV2Landscape(
                     }
                     .SwipeGesture(
                         enabled = (playerState == PlayerInternalState.COVER && !isListenTogetherGuest),
-                        onSwipeLeft = { if (canSkipNext) playerConnection.player.seekToNext() },
-                        onSwipeRight = { if (canSkipPrevious) playerConnection.player.seekToPrevious() }
+                        onSwipeLeft = { if (canSkipNext) playerConnection.playbackPlayer.seekToNext() },
+                        onSwipeRight = { if (canSkipPrevious) playerConnection.playbackPlayer.seekToPrevious() }
                     ),
                 contentAlignment = Alignment.Center
             ) {
@@ -682,7 +687,7 @@ fun PlayerV2Landscape(
                                     onClick = {
                                         if (!isListenTogetherGuest) {
                                             if (isCasting) castHandler?.skipToPrevious()
-                                            else if (canSkipPrevious) playerConnection.player.seekToPrevious()
+                                            else if (canSkipPrevious) playerConnection.playbackPlayer.seekToPrevious()
                                         }
                                     },
                                     enabled = !isListenTogetherGuest && canSkipPrevious,
@@ -706,7 +711,7 @@ fun PlayerV2Landscape(
                                         } else if (isCasting) {
                                             if (castIsPlaying) castHandler?.pause() else castHandler?.play()
                                         } else {
-                                            playerConnection.player.togglePlayPause()
+                                            playerConnection.playbackPlayer.togglePlayPause()
                                         }
                                     },
                                     modifier = Modifier.size(68.dp)
@@ -735,7 +740,7 @@ fun PlayerV2Landscape(
                                     onClick = {
                                         if (!isListenTogetherGuest) {
                                             if (isCasting) castHandler?.skipToNext()
-                                            else if (canSkipNext) playerConnection.player.seekToNext()
+                                            else if (canSkipNext) playerConnection.playbackPlayer.seekToNext()
                                         }
                                     },
                                     enabled = !isListenTogetherGuest && canSkipNext,
@@ -782,7 +787,7 @@ fun PlayerV2Landscape(
                                 )
 
                                 Slider(
-                                    value = if (isCasting) castVolume
+                                    value = if (sonosActive) sonosState.volume / 100f else if (isCasting) castVolume
                                     else if (isVolActive) systemVolume
                                     else animatedVolume,
                                     onValueChange = { newValue ->

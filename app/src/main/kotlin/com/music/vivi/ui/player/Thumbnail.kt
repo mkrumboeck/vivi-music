@@ -356,11 +356,11 @@ fun Thumbnail(
 
         if (currentItem > currentMediaIndex && canSkipNext) {
             if (!playerConnection.service.manualSkipToNextWithCrossfade()) {
-                playerConnection.player.seekToNext()
+                playerConnection.playbackPlayer.seekToNext()
             }
         } else if (currentItem < currentMediaIndex && canSkipPrevious) {
             if (!playerConnection.service.manualSkipToPreviousWithCrossfade()) {
-                playerConnection.player.seekToPreviousMediaItem()
+                playerConnection.playbackPlayer.seekToPreviousMediaItem()
             }
         }
     }
@@ -671,8 +671,8 @@ private fun ThumbnailItem(
                     onDoubleTap = { offset ->
                         if (isListenTogetherGuest) return@detectTapGestures
 
-                        val currentPosition = playerConnection.player.currentPosition
-                        val duration = playerConnection.player.duration
+                        val currentPosition = playerConnection.playbackPlayer.currentPosition
+                        val duration = playerConnection.playbackPlayer.duration
 
                         val now = System.currentTimeMillis()
                         if (incrementalSeekSkipEnabled && now - lastTapTime < 1000) {
@@ -688,10 +688,10 @@ private fun ThumbnailItem(
                                 (layoutDirection == LayoutDirection.Rtl && offset.x > size.width / 2)
 
                         if (isLeftSide) {
-                            playerConnection.player.seekTo((currentPosition - skipAmount).coerceAtLeast(0))
+                            playerConnection.playbackPlayer.seekTo((currentPosition - skipAmount).coerceAtLeast(0))
                             onSeek(context.getString(R.string.seek_backward_dynamic, skipAmount / 1000), true)
                         } else {
-                            playerConnection.player.seekTo((currentPosition + skipAmount).coerceAtMost(duration))
+                            playerConnection.playbackPlayer.seekTo((currentPosition + skipAmount).coerceAtMost(duration))
                             onSeek(context.getString(R.string.seek_forward_dynamic, skipAmount / 1000), true)
                         }
                     }

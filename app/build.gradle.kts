@@ -291,6 +291,7 @@ dependencies {
     implementation(project(":jiosaavn"))
     implementation(project(":spotify"))
     implementation(project(":lyricsProvider"))
+    implementation(project(":sonoscontroller"))
 
     implementation(libs.innertubex)
     implementation(libs.expressivelab)

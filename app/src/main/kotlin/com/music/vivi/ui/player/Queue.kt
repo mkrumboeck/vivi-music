@@ -309,7 +309,7 @@ fun Queue(
         if (sleepTimerEnabled) {
             while (isActive) {
                 sleepTimerTimeLeft = if (playerConnection.service.sleepTimer.pauseWhenSongEnd) {
-                    playerConnection.player.duration - playerConnection.player.currentPosition
+                    playerConnection.playbackPlayer.duration - playerConnection.playbackPlayer.currentPosition
                 } else {
                     playerConnection.service.sleepTimer.triggerTime - System.currentTimeMillis()
                 }
@@ -1323,7 +1323,7 @@ fun Queue(
                                                                             mediaId
                                                                         ) ?: false
                                                                     if (!navigated) {
-                                                                        playerConnection.player.seekToDefaultPosition(
+                                                                        playerConnection.playbackPlayer.seekToDefaultPosition(
                                                                             window.firstPeriodIndex
                                                                         )
                                                                     }

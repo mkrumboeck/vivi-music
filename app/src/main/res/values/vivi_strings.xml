@@ -1167,4 +1167,9 @@
     <string name="top_comments">Top</string>
     <string name="newest_comments">Newest</string>
     <string name="replies">Replies</string>
+    <string name="sonos_connection_lost">Sonos connection lost. Playback paused and output returned to this phone.</string>
+    <string name="sonos_playback_replaced">Another source is playing on Sonos. Playback paused and output returned to this phone.</string>
+    <string name="sonos_start_failed">Could not start Sonos playback: %1$s</string>
+    <string name="sonos_finite_tracks_only">Only tracks with a known duration and audio file size can be played on Sonos.</string>
+    <string name="sonos_stream_format_unsupported">No usable audio stream is available for this track.</string>
 </resources>

@@ -173,6 +173,40 @@ object NewPipeExtractor {
         return newPipeUtils?.getStreamUrl(format, videoId)
     }
 
+    /** Prefers M4A for Sonos while retaining direct-stream fallbacks. */
+    fun sonosAudioStream(videoId: String): Pair<String, String>? {
+        init()
+        org.schabi.newpipe.extractor.services.youtube.extractors.YoutubeStreamExtractor.setFetchIosClient(true)
+        val info = StreamInfo.getInfo(NewPipe.getService(0), "https://www.youtube.com/watch?v=$videoId")
+        val audio = selectSonosAudio(info.audioStreams)
+        if (audio != null) {
+            return audio.content to (audio.format?.mimeType ?: return null)
+        }
+        // Progressive MP4 can provide an audio track when no separate audio URL is available.
+        val muxed = info.videoStreams
+            .filter { it.isUrl && !it.isVideoOnly && it.format?.mimeType == "video/mp4" &&
+                it.deliveryMethod == org.schabi.newpipe.extractor.stream.DeliveryMethod.PROGRESSIVE_HTTP }
+            .maxByOrNull { if (it.itagItem?.id == 18) 1 else 0 } ?: return null
+        return muxed.content to "video/mp4"
+    }
+
+    internal fun selectSonosAudio(
+        streams: List<org.schabi.newpipe.extractor.stream.AudioStream>,
+    ): org.schabi.newpipe.extractor.stream.AudioStream? {
+        return streams
+            .filter { it.isUrl && it.deliveryMethod in listOf(
+                org.schabi.newpipe.extractor.stream.DeliveryMethod.PROGRESSIVE_HTTP,
+                org.schabi.newpipe.extractor.stream.DeliveryMethod.DASH,
+            ) }
+            .filter { it.format?.mimeType in listOf("audio/mp4", "audio/mpeg", "audio/webm") }
+            .maxByOrNull {
+                (if (it.itagItem?.id == 140) 100_000 else 0) +
+                    (if (it.format?.mimeType == "audio/mp4") 10_000 else 0) +
+                    (if (it.format?.mimeType == "audio/mpeg") 5_000 else 0) -
+                    kotlin.math.abs(it.averageBitrate - 128)
+            }
+    }
+
     fun newPipePlayer(videoId: String): List<Pair<Int, String>> {
         init()
         return try {

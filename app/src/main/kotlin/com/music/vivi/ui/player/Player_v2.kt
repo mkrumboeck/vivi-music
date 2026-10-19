@@ -130,7 +130,10 @@ fun PlayerV2(
     val castIsPlaying by castHandler?.castIsPlaying?.collectAsState() ?: remember { mutableStateOf(false) }
     val castIsBuffering by castHandler?.castIsBuffering?.collectAsState() ?: remember { mutableStateOf(false) }
     val castVolume by castHandler?.castVolume?.collectAsState() ?: remember { mutableFloatStateOf(1f) }
-    val effectiveIsPlaying = if (isCasting) castIsPlaying else isPlaying
+    val sonosHandler = playerConnection.service.sonosConnectionHandler
+    val sonosActive by sonosHandler?.active?.collectAsState() ?: remember { mutableStateOf(false) }
+    val sonosState by sonosHandler?.state?.collectAsState() ?: remember { mutableStateOf(at.techtown.sonoscontroller.SonosState()) }
+    val effectiveIsPlaying = if (sonosActive) sonosState.playing else if (isCasting) castIsPlaying else isPlaying
     var lastManualSeekTime by remember { mutableLongStateOf(0L) }
     
     BackHandler(enabled = playerState != PlayerInternalState.COVER) {
@@ -285,8 +288,8 @@ fun PlayerV2(
             while (isActive) {
                 delay(100)
                 if (sliderPosition == null) {
-                    val rawDuration = playerConnection.player.duration
-                    position = playerConnection.player.currentPosition.coerceAtLeast(0L)
+                    val rawDuration = playerConnection.playbackPlayer.duration
+                    position = playerConnection.playbackPlayer.currentPosition.coerceAtLeast(0L)
                     duration = if (rawDuration == C.TIME_UNSET || rawDuration < 0) 0L else rawDuration
                 }
             }
@@ -296,8 +299,8 @@ fun PlayerV2(
     // Also update once on song change
     LaunchedEffect(mediaMetadata?.id) {
         if (!isCasting) {
-            val rawDuration = playerConnection.player.duration
-            position = playerConnection.player.currentPosition.coerceAtLeast(0L)
+            val rawDuration = playerConnection.playbackPlayer.duration
+            position = playerConnection.playbackPlayer.currentPosition.coerceAtLeast(0L)
             duration = if (rawDuration == C.TIME_UNSET || rawDuration < 0) 0L else rawDuration
         }
     }
@@ -852,7 +855,7 @@ fun PlayerV2(
                                             castHandler?.seekTo(pos)
                                             lastManualSeekTime = System.currentTimeMillis()
                                         } else {
-                                            playerConnection.player.seekTo(pos)
+                                            playerConnection.playbackPlayer.seekTo(pos)
                                         }
                                         position = pos
                                         sliderPosition = null
@@ -913,7 +916,7 @@ fun PlayerV2(
                                     } else if (isCasting) {
                                         if (castIsPlaying) castHandler?.pause() else castHandler?.play()
                                     } else {
-                                        playerConnection.player.togglePlayPause()
+                                        playerConnection.playbackPlayer.togglePlayPause()
                                     }
                                 },
                                 modifier = Modifier.size(88.dp)
@@ -973,11 +976,13 @@ fun PlayerV2(
                             )
                             
                             Slider(
-                                value = if (isCasting) castVolume
+                                value = if (sonosActive) sonosState.volume / 100f else if (isCasting) castVolume
                                         else if (isVolActive) systemVolume
                                         else animatedVolume,
                                 onValueChange = { newValue ->
-                                    if (isCasting) {
+                                    if (sonosActive) {
+                                        sonosHandler?.setVolume((newValue * 100).toInt())
+                                    } else if (isCasting) {
                                         castHandler?.setVolume(newValue)
                                     } else {
                                         systemVolume = newValue

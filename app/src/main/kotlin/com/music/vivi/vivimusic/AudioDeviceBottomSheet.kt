@@ -36,6 +36,8 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -95,6 +97,8 @@ import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.rememberSliderState
+import androidx.compose.runtime.collectAsState
+import at.techtown.sonoscontroller.SonosState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -170,6 +174,11 @@ fun AudioDeviceBottomSheet(onDismiss: () -> Unit, modifier: Modifier = Modifier)
 
     val playerConnection = LocalPlayerConnection.current
     val service = playerConnection?.service
+    val sonos = service?.sonosConnectionHandler
+    val sonosActive by sonos?.active?.collectAsState() ?: remember { mutableStateOf(false) }
+    val sonosPreparing by sonos?.preparing?.collectAsState() ?: remember { mutableStateOf(false) }
+    val sonosTarget by sonos?.target?.collectAsState() ?: remember { mutableStateOf<at.techtown.sonoscontroller.SonosDevice?>(null) }
+    val sonosState by sonos?.state?.collectAsState() ?: remember { mutableStateOf(SonosState()) }
     var showDevicePopup by remember { mutableStateOf(false) }
 
     val bluetoothLauncher = rememberLauncherForActivityResult(
@@ -311,10 +320,12 @@ fun AudioDeviceBottomSheet(onDismiss: () -> Unit, modifier: Modifier = Modifier)
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp)
                 .padding(bottom = 24.dp)
                 .animateContentSize()
         ) {
+            SonosDeviceDiscovery(service)
             when {
                 isLoading -> {
                     Box(
@@ -365,8 +376,10 @@ fun AudioDeviceBottomSheet(onDismiss: () -> Unit, modifier: Modifier = Modifier)
                 }
 
                 else -> {
-                    val activeDevice = audioDevices.firstOrNull { it.isActive }
-                    val hasBluetooth = audioDevices.any { it.type == AudioDeviceType.BLUETOOTH }
+                    val activeDevice = if (sonosActive && sonosTarget != null)
+                        AudioDevice(sonosTarget!!.name, AudioDeviceType.EXTERNAL_SPEAKER, true, true)
+                    else audioDevices.firstOrNull { it.isActive }
+                    val hasBluetooth = audioDevices.size > 1 || sonos != null
 
                     Column(
                         modifier = Modifier
@@ -396,7 +409,12 @@ fun AudioDeviceBottomSheet(onDismiss: () -> Unit, modifier: Modifier = Modifier)
                                     val backgroundScale by animateFloatAsState(targetValue = if (isActiveDevice) 1.10f else 1f, animationSpec = tween(durationMillis = 400, easing = FastOutSlowInEasing), label = "activeDeviceScale")
                                     @DrawableRes val deviceIconRes = when (device.type) { AudioDeviceType.BLUETOOTH -> R.drawable.bluetooth; AudioDeviceType.WIRED_HEADPHONES -> R.drawable.headset_applemusic; AudioDeviceType.USB_HEADSET -> R.drawable.usb; AudioDeviceType.HDMI -> R.drawable.tv; AudioDeviceType.EXTERNAL_SPEAKER -> R.drawable.speaker_apple; else -> R.drawable.speaker_apple }
 
-                                    Surface(modifier = Modifier.weight(1f), color = Color.Transparent, tonalElevation = 0.dp) {
+                                    Surface(
+                                        onClick = { showDevicePopup = !showDevicePopup },
+                                        modifier = Modifier.weight(1f),
+                                        color = Color.Transparent,
+                                        tonalElevation = 0.dp,
+                                    ) {
                                         Row(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                                             Box(modifier = Modifier.padding(start = 4.dp).size(56.dp), contentAlignment = Alignment.Center) {
                                                 val isBatteryIndicatorArea = device.type == AudioDeviceType.BLUETOOTH && device.batteryLevel != null
@@ -427,6 +445,12 @@ fun AudioDeviceBottomSheet(onDismiss: () -> Unit, modifier: Modifier = Modifier)
                                         }
                                     }
                                     
+                                    if (sonosPreparing) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.padding(end = 12.dp).size(24.dp),
+                                            strokeWidth = 2.dp,
+                                        )
+                                    }
                                     AnimatedVisibility(
                                         visible = hasBluetooth,
                                         enter = fadeIn() + expandHorizontally(),
@@ -461,21 +485,17 @@ fun AudioDeviceBottomSheet(onDismiss: () -> Unit, modifier: Modifier = Modifier)
                             }
                         }
 
-                        // Animated in-place device switcher panel
+                        // Existing output-device switcher includes local and Sonos devices.
                         AnimatedVisibility(
-                            visible = hasBluetooth && showDevicePopup,
-                            enter = expandVertically(
-                                animationSpec = tween(300, easing = FastOutSlowInEasing)
-                            ) + fadeIn(tween(200)),
-                            exit = shrinkVertically(
-                                animationSpec = tween(250, easing = FastOutSlowInEasing)
-                            ) + fadeOut(tween(150))
+                            visible = showDevicePopup,
+                            enter = expandVertically(animationSpec = tween(300, easing = FastOutSlowInEasing)) + fadeIn(tween(200)),
+                            exit = shrinkVertically(animationSpec = tween(250, easing = FastOutSlowInEasing)) + fadeOut(tween(150)),
                         ) {
                             Column(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
-                                val availableDevices = audioDevices.filter { !it.isActive }
+                                val availableDevices = audioDevices.filter { sonosActive || !it.isActive }
                                 availableDevices.forEach { dev ->
                                     key(dev.deviceId) {
                                         @DrawableRes val deviceIconRes = when (dev.type) {
@@ -525,12 +545,15 @@ fun AudioDeviceBottomSheet(onDismiss: () -> Unit, modifier: Modifier = Modifier)
                                         }
                                     }
                                 }
+                                SonosDeviceSection(service) { showDevicePopup = false }
                             }
                         }
 
                     // Volume Control
-                    var volumeSliderValue by rememberSaveable { mutableFloatStateOf(currentVolume) }
-                    LaunchedEffect(currentVolume) { volumeSliderValue = currentVolume }
+                    val outputVolume = if (sonosActive) sonosState.volume.toFloat() else currentVolume
+                    val outputMaxVolume = if (sonosActive) 100 else maxVolume
+                    var volumeSliderValue by rememberSaveable { mutableFloatStateOf(outputVolume) }
+                    LaunchedEffect(outputVolume, sonosActive) { if (!isUserDragging) volumeSliderValue = outputVolume }
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(4.dp),
@@ -551,7 +574,7 @@ fun AudioDeviceBottomSheet(onDismiss: () -> Unit, modifier: Modifier = Modifier)
                                     fontWeight = FontWeight.Medium,
                                     modifier = Modifier.weight(1f).padding(start = 16.dp, end = 16.dp)
                                 )
-                                val percentage = if (maxVolume > 0) ((volumeSliderValue / maxVolume) * 100).toInt() else 0
+                                val percentage = if (outputMaxVolume > 0) ((volumeSliderValue / outputMaxVolume) * 100).toInt() else 0
                                 Text(
                                     text = "$percentage%",
                                     modifier = Modifier.padding(end = 14.dp).border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 4.dp),
@@ -565,11 +588,14 @@ fun AudioDeviceBottomSheet(onDismiss: () -> Unit, modifier: Modifier = Modifier)
                                 value = volumeSliderValue,
                                 onValueChange = { newValue ->
                                     volumeSliderValue = newValue
-                                    currentVolume = newValue
-                                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newValue.toInt(), 0)
+                                    isUserDragging = true
+                                    if (!sonosActive) {
+                                        currentVolume = newValue
+                                        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newValue.toInt(), 0)
+                                    }
                                 },
-                                onValueChangeFinished = { isUserDragging = false },
-                                valueRange = 0f..maxVolume.toFloat()
+                                onValueChangeFinished = { isUserDragging = false; if (sonosActive) sonos?.setVolume(volumeSliderValue.toInt()) },
+                                valueRange = 0f..outputMaxVolume.toFloat()
                             )
                         }
                     }

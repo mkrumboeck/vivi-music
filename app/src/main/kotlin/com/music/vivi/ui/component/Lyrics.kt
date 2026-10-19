@@ -767,7 +767,7 @@ fun Lyrics(
             return@LaunchedEffect
         }
         if (lyricsAnimationStyle == LyricsAnimationStyle.METRO_LYRICS) {
-            var lastPlayerPos = playerConnection.player.currentPosition
+            var lastPlayerPos = playerConnection.playbackPlayer.currentPosition
             var lastUpdateTime = System.currentTimeMillis()
             val hasWordTimings = lines.any { !it.words.isNullOrEmpty() }
             
@@ -780,8 +780,8 @@ fun Lyrics(
                 val position = if (isSeeking) {
                     sliderPosition!!
                 } else {
-                    val playerPos = playerConnection.player.currentPosition
-                    val isPlaying = playerConnection.player.isPlaying
+                    val playerPos = playerConnection.playbackPlayer.currentPosition
+                    val isPlaying = playerConnection.playbackPlayer.isPlaying
                     if (playerPos != lastPlayerPos || !isPlaying) {
                         lastPlayerPos = playerPos
                         lastUpdateTime = now
@@ -866,7 +866,7 @@ fun Lyrics(
                 delay(8)
                 val sliderPosition = sliderPositionProvider()
                 isSeeking = sliderPosition != null
-                val position = sliderPosition ?: playerConnection.player.currentPosition
+                val position = sliderPosition ?: playerConnection.playbackPlayer.currentPosition
                 currentPlaybackPosition = position
                 val lyricsOffset = currentSong?.song?.lyricsOffset ?: 0
                 currentLineIndex = findCurrentLineIndex(lines, position + lyricsOffset)
