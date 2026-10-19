@@ -62,7 +62,7 @@ class SonosConnectionHandler internal constructor(
     init {
         scope.launch {
             state.collect { current ->
-                if (!isActive || _preparing.value) return@collect
+                if (!_active.value || _preparing.value) return@collect
                 val now = SystemClock.elapsedRealtime()
                 if (remotePosition != current.position * 1000L || lastStatus != current.transportStatus) {
                     remotePosition = current.position * 1000L
@@ -143,7 +143,7 @@ class SonosConnectionHandler internal constructor(
                 if (generation != request || service.player.currentMediaItem?.mediaId != metadata.id) return@launch
                 stage = "switching media session"
                 val casting = service.castConnectionHandler?.takeIf { it.isCasting.value }
-                val startPosition = position ?: if (isActive) positionMs
+                val startPosition = position ?: if (_active.value) positionMs
                     else casting?.castPosition?.value ?: service.player.currentPosition
                 val startPlaying = pendingPlayWhenReady ?: casting?.castIsPlaying?.value ?: service.player.playWhenReady
                 casting?.let { cast ->
@@ -189,7 +189,7 @@ class SonosConnectionHandler internal constructor(
                 if (request == generation) {
                     _preparing.value = false
                     remotePlayer.refresh()
-                    if (isActive) prefetchNext()
+                    if (_active.value) prefetchNext()
                 }
             }
         }
